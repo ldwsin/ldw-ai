@@ -3,7 +3,8 @@ package com.yueyan.ldwaicodemother.Factory;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.yueyan.ldwaicodemother.ai.AiCodeGeneratorService;
-import com.yueyan.ldwaicodemother.ai.tools.FileWriteTool;
+import com.yueyan.ldwaicodemother.ai.tools.*;
+import com.yueyan.ldwaicodemother.manager.ToolManager;
 import com.yueyan.ldwaicodemother.model.enums.CodeGenTypeEnum;
 import com.yueyan.ldwaicodemother.service.ChatHistoryService;
 import dev.langchain4j.community.store.memory.chat.redis.RedisChatMemoryStore;
@@ -41,6 +42,9 @@ public class AiCodeGeneratorServiceFactory {
 
     @Resource
     private ChatHistoryService chatHistoryService;
+
+    @Resource
+    private ToolManager toolManager;
 
 
     private final Cache<String,AiCodeGeneratorService> serviceCache= Caffeine.newBuilder()
@@ -87,15 +91,17 @@ public class AiCodeGeneratorServiceFactory {
         chatHistoryService.loadChatHistoryToMemory(appId,chatMemory,20);
         //根据代码生成类型选择不同的模型配置
         return switch (codeGenType){
-            //vue项目使用推理模型
+           // Vue 项目生成使用推理模型
             case VUE_PROJECT -> AiServices.builder(AiCodeGeneratorService.class)
                     .streamingChatModel(reasoningStreamingChatModel)
-                    .chatMemoryProvider(memoryId->chatMemory)
-                    .tools(new FileWriteTool())
+                    .chatMemoryProvider(memoryId -> chatMemory)
+                    .tools(toolManager.getAllTools())
                     .hallucinatedToolNameStrategy(toolExecutionRequest -> ToolExecutionResultMessage.from(
-                            toolExecutionRequest,"Error:there is no tool called"+toolExecutionRequest
+                            toolExecutionRequest, "Error: there is no tool called " + toolExecutionRequest.name()
                     ))
                     .build();
+
+
             case HTML, MULTI_FILE -> AiServices.builder(AiCodeGeneratorService.class)
                     .chatModel(chatModel)
                     .streamingChatModel(reasoningStreamingChatModel)
