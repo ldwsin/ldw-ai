@@ -4,9 +4,12 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.yueyan.ldwaicodemother.ai.AiCodeGeneratorService;
 import com.yueyan.ldwaicodemother.ai.tools.*;
+import com.yueyan.ldwaicodemother.exception.BusinessException;
+import com.yueyan.ldwaicodemother.exception.ErrorCode;
 import com.yueyan.ldwaicodemother.manager.ToolManager;
 import com.yueyan.ldwaicodemother.model.enums.CodeGenTypeEnum;
 import com.yueyan.ldwaicodemother.service.ChatHistoryService;
+import com.yueyan.ldwaicodemother.utils.SpringContextUtil;
 import dev.langchain4j.community.store.memory.chat.redis.RedisChatMemoryStore;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
@@ -30,12 +33,8 @@ public class AiCodeGeneratorServiceFactory {
     @Resource(name = "openAiChatModel")
     private ChatModel chatModel;
 
-//    @Resource(name = "customOpenAiStreamingChatModel")
-//    private StreamingChatModel openAiStreamingChatModel;
-
-    @Resource
-//    @Qualifier("reasoningStreamingChatModel")
-    private StreamingChatModel reasoningStreamingChatModel;
+//    @Resource
+//    private StreamingChatModel reasoningStreamingChatModel;
 
     @Resource
     private RedisChatMemoryStore redisChatMemoryStore;
@@ -89,35 +88,42 @@ public class AiCodeGeneratorServiceFactory {
                 .build();
         //从数据库加载历史
         chatHistoryService.loadChatHistoryToMemory(appId,chatMemory,20);
-        //根据代码生成类型选择不同的模型配置
-        return switch (codeGenType){
-           // Vue 项目生成使用推理模型
-            case VUE_PROJECT -> AiServices.builder(AiCodeGeneratorService.class)
-                    .streamingChatModel(reasoningStreamingChatModel)
-                    .chatMemoryProvider(memoryId -> chatMemory)
-                    .tools(toolManager.getAllTools())
-                    .hallucinatedToolNameStrategy(toolExecutionRequest -> ToolExecutionResultMessage.from(
-                            toolExecutionRequest, "Error: there is no tool called " + toolExecutionRequest.name()
-                    ))
-                    .build();
-
-
-            case HTML, MULTI_FILE -> AiServices.builder(AiCodeGeneratorService.class)
-                    .chatModel(chatModel)
-                    .streamingChatModel(reasoningStreamingChatModel)
-                    .chatMemory(chatMemory)
-                    .build();
-            default -> throw new IllegalArgumentException("Invalid code generation type: " + codeGenType);
+        // 根据代码生成类型选择不同的模型配置
+        return switch (codeGenType) {
+            case VUE_PROJECT -> {
+                // 使用多例模式的 StreamingChatModel 解决并发问题
+                StreamingChatModel reasoningStreamingChatModel = SpringContextUtil.getBean("reasoningStreamingChatModelPrototype", StreamingChatModel.class);
+                yield AiServices.builder(AiCodeGeneratorService.class)
+                        .streamingChatModel(reasoningStreamingChatModel)
+                        .chatMemoryProvider(memoryId -> chatMemory)
+                        .tools(toolManager.getAllTools())
+                        .hallucinatedToolNameStrategy(toolExecutionRequest -> ToolExecutionResultMessage.from(
+                                toolExecutionRequest, "Error: there is no tool called " + toolExecutionRequest.name()
+                        ))
+                        .build();
+            }
+            case HTML, MULTI_FILE -> {
+                // 使用多例模式的 StreamingChatModel 解决并发问题
+                StreamingChatModel openAiStreamingChatModel = SpringContextUtil.getBean("streamingChatModelPrototype", StreamingChatModel.class);
+                yield AiServices.builder(AiCodeGeneratorService.class)
+                        .chatModel(chatModel)
+                        .streamingChatModel(openAiStreamingChatModel)
+                        .chatMemory(chatMemory)
+                        .build();
+            }
+            default -> throw new BusinessException(ErrorCode.SYSTEM_ERROR,
+                    "不支持的代码生成类型: " + codeGenType.getValue());
         };
+
     }
 
     /**
      * 默认提供一个 Bean
      */
-//    @Bean
-//    public AiCodeGeneratorService aiCodeGeneratorService() {
-//        return getAiCodeGeneratorService(0L);
-//    }
+    @Bean
+    public AiCodeGeneratorService aiCodeGeneratorService() {
+        return getAiCodeGeneratorService(0L);
+    }
 
 }
 
